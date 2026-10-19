@@ -268,7 +268,7 @@ pub fn separate(model: &CmykModel, p: &CmykParams, target: [f64; 3], warm: Optio
             let chosen = best.iter().sum::<f64>() + best_k;
             if d < de - 0.2 || (d < de + 0.2 && ink < chosen - 1e-9) {
                 best = cmy;
-                de = de.min(d);
+                de = d;
                 best_k = kk;
             }
         }
