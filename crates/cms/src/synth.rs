@@ -255,22 +255,25 @@ pub fn separate(model: &CmykModel, p: &CmykParams, target: [f64; 3], warm: Optio
         // The GCR black comes from the gray component of the K-free solution, which is small for
         // a *saturated* dark colour, so the K fixed above cannot reach a target that needs black
         // (Y100 K33 came back C25 M22 Y100 K4, ΔE 6.2 on the model's own colour). Try black from
-        // none to the ink limit: the closest hit wins, and among hits that are equally close the
-        // one that uses the least ink, so a neutral still separates to black rather than C=M=Y.
+        // none to the ink limit, then let the closest hit decide and take the least-ink hit within
+        // ΔE 0.2 of it, so a neutral still separates to black rather than C=M=Y and the result
+        // does not depend on which black step was tried first.
+        let mut seen: Vec<([f64; 3], f64, f64)> = vec![(best, k, de)];
         for i in 0..=10 {
             let kk = p.k_max * i as f64 / 10.0;
-            if (kk - best_k).abs() < 1e-9 {
+            if (kk - k).abs() < 1e-9 {
                 continue;
             }
             let seeds3 = [[(cmy0[0] - kk).max(0.0), (cmy0[1] - kk).max(0.0), (cmy0[2] - kk).max(0.0)], cmy0];
             let (cmy, d) = solve_cmy(model, target, kk, (p.tac - kk).max(0.0), &seeds3);
-            let ink = cmy.iter().sum::<f64>() + kk;
-            let chosen = best.iter().sum::<f64>() + best_k;
-            if d < de - 0.2 || (d < de + 0.2 && ink < chosen - 1e-9) {
-                best = cmy;
-                de = d;
-                best_k = kk;
-            }
+            seen.push((cmy, kk, d));
+        }
+        let closest = seen.iter().map(|c| c.2).fold(f64::INFINITY, f64::min);
+        let ink = |c: &([f64; 3], f64, f64)| c.0.iter().sum::<f64>() + c.1;
+        if let Some(best_hit) = seen.iter().filter(|c| c.2 <= closest + 0.2).min_by(|a, b| ink(a).total_cmp(&ink(b))) {
+            best = best_hit.0;
+            best_k = best_hit.1;
+            de = best_hit.2;
         }
     }
     ([best[0], best[1], best[2], best_k], de)
