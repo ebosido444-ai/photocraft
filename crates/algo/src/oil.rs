@@ -233,10 +233,16 @@ mod tests {
             }
             v += 0.25;
         }
-        // The half-integer boundaries are where a `f32` add of the half rounds across the value
-        // `f32::round` keeps below: `0x3eff_ffff` is the largest `f32` under `0.5`.
-        for v in [0.5f32, -0.5, f32::from_bits(0x3eff_ffff), f32::from_bits(0xbeff_ffff)] {
-            assert_eq!(round_i32(v), v.round() as i32, "round_i32({v})");
+        // The half-integer boundaries are where an `f32` add of the half rounds across the value
+        // `f32::round` keeps below (`0x3eff_ffff` is the largest `f32` under `0.5`), every tie
+        // point, and the saturating ends the `i32` cast reaches.
+        let below_half = f32::from_bits(0x3eff_ffff);
+        for v in [below_half, -below_half, 0.5f32, -0.5, 1.5, -1.5, 2.5, -2.5, 8_388_607.5, -8_388_607.5, 8_388_608.0, 3.0e9, -3.0e9] {
+            assert_eq!(round_i32(v), v.round() as i32, "round_i32({v:e})");
+            for n in [1usize, 2, 33] {
+                let want = (v.round().clamp(0.0, (n - 1) as f32)) as usize;
+                assert_eq!(round_index(v, n), want, "round_index({v:e}, {n})");
+            }
         }
         // Every value one and two steps either side of an integer the LIC coordinates can reach.
         for k in -40i32..=2100 {
@@ -250,5 +256,25 @@ mod tests {
             assert_eq!(round_index(f32::NEG_INFINITY, n), (f32::NEG_INFINITY.clamp(0.0, (n - 1) as f32)) as usize);
             assert_eq!(round_index(f32::INFINITY, n), ((n - 1) as f32) as usize);
         }
+    }
+
+    /// Every `f32` bit pattern in [-4096, 4096] (both signs, about 2.3e9 values, split across
+    /// threads) rounds exactly like `f32::round`.
+    #[test]
+    fn rounding_matches_the_standard_library_for_every_f32_up_to_4096() {
+        use rayon::prelude::*;
+        let last = 4096.0f32.to_bits();
+        let bad = (0..=last >> 20)
+            .into_par_iter()
+            .filter_map(|hi| {
+                let lo = hi << 20;
+                let hi_end = (lo | 0xf_ffff).min(last);
+                (lo..=hi_end).find_map(|bits| {
+                    let v = f32::from_bits(bits);
+                    [v, -v].into_iter().find(|v| round_i32(*v) != v.round() as i32)
+                })
+            })
+            .min_by(|a, b| a.abs().total_cmp(&b.abs()));
+        assert_eq!(bad, None, "round_i32 differs from f32::round");
     }
 }
