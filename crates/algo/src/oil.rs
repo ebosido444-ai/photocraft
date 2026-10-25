@@ -31,13 +31,14 @@ fn stroke_len(stylization: f32) -> f32 {
 }
 
 /// `f32::round` (half away from zero) as an integer, without the `roundf` call `f32::round`
-/// makes on the baseline x86-64 target. The half is added in `f64`, where the sum is exact for
-/// every `|v| < 2^22` (all window coordinates): in `f32` the largest value below `0.5` plus `0.5`
-/// rounds up to `1.0`, which would return `1` where `f32::round` returns `0`. Larger magnitudes
-/// saturate like the cast the caller used to perform.
+/// makes on the baseline x86-64 target. The sum is taken in `f64`, where `v ± 0.5` is exact for
+/// every `f32` the cast does not saturate (an `f32` sum is not: `0.49999997 + 0.5` rounds up to
+/// `1.0`), so the result equals `v.round() as i32` for every `f32`, NaN (0) and the saturating
+/// ends included.
 #[inline]
 fn round_i32(v: f32) -> i32 {
-    (f64::from(v) + 0.5f64.copysign(f64::from(v))) as i32
+    let v = f64::from(v);
+    (v + 0.5f64.copysign(v)) as i32
 }
 
 /// [`round_i32`] clamped into `0..n`.
@@ -233,11 +234,10 @@ mod tests {
             }
             v += 0.25;
         }
-        // The half-integer boundaries are where an `f32` add of the half rounds across the value
-        // `f32::round` keeps below (`0x3eff_ffff` is the largest `f32` under `0.5`), every tie
-        // point, and the saturating ends the `i32` cast reaches.
+        // The binade crossings where an `f32` sum `v + 0.5` rounds up (0.5 - 2^-25), the ties, and
+        // the largest non-integer `f32`.
         let below_half = f32::from_bits(0x3eff_ffff);
-        for v in [below_half, -below_half, 0.5f32, -0.5, 1.5, -1.5, 2.5, -2.5, 8_388_607.5, -8_388_607.5, 8_388_608.0, 3.0e9, -3.0e9] {
+        for v in [below_half, -below_half, 0.5, -0.5, 1.5, -1.5, 2.5, -2.5, 8_388_607.5, -8_388_607.5, 8_388_608.0, 3.0e9, -3.0e9] {
             assert_eq!(round_i32(v), v.round() as i32, "round_i32({v:e})");
             for n in [1usize, 2, 33] {
                 let want = (v.round().clamp(0.0, (n - 1) as f32)) as usize;
